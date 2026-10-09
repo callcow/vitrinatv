@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Витрина ТВ</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --card-hover: #232732;
+    --accent: #3ea6ff;
+    --text: #eaeef5;
+    --muted: #8b93a7;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .status { color: var(--muted); font-size: 12px; }
+
+  .player {
+    position: relative; aspect-ratio: 16/9; background: #000;
+    border-radius: 12px; overflow: hidden;
+  }
+  .player video { width: 100%; height: 100%; display: block; background: #000; }
+  .player .now {
+    position: absolute; left: 12px; bottom: 12px;
+    background: rgba(0,0,0,.6); backdrop-filter: blur(6px);
+    padding: 6px 10px; border-radius: 999px; font-size: 13px;
+    pointer-events: none;
+  }
+  .player .spinner {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    color: var(--muted); font-size: 13px;
+  }
+  .player.loading .spinner { display: flex; }
+
+  .carousel {
+    margin-top: 16px;
+    display: flex; gap: 10px; overflow-x: auto;
+    padding: 6px 2px 14px;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+    scrollbar-color: #2a2e3a transparent;
+  }
+  .carousel::-webkit-scrollbar { height: 8px; }
+  .carousel::-webkit-scrollbar-thumb { background: #2a2e3a; border-radius: 8px; }
+
+  .channel {
+    flex: 0 0 auto;
+    width: 120px;
+    background: var(--card);
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 10px 8px;
+    cursor: pointer;
+    text-align: center;
+    scroll-snap-align: start;
+    transition: background .15s, border-color .15s;
+    user-select: none;
+  }
+  .channel:hover { background: var(--card-hover); }
+  .channel.active { border-color: var(--accent); }
+  .channel img {
+    width: 100%; height: 60px; object-fit: contain;
+    margin-bottom: 6px; pointer-events: none;
+  }
+  .channel .name {
+    font-size: 12px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .scroll-hint { color: var(--muted); font-size: 12px; margin-top: -6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Витрина ТВ</h1>
+    <span class="status" id="status">загрузка…</span>
+  </header>
+
+  <div class="player" id="player">
+    <video id="video" playsinline autoplay muted controls></video>
+    <div class="now" id="now">—</div>
+    <div class="spinner">подключение…</div>
+  </div>
+
+  <div class="scroll-hint">← листайте каналы →</div>
+  <div class="carousel" id="carousel"></div>
+</div>
+
+<script>
+const CHANNELS = [{"slug": "1tvch", "title": "Первый Канал", "logo": "https://vitrina.tv/assets/images/logos/1tv/1tv.svg", "hls": "https://vitrina-live-cdnnow.mediavitrina.ru/hls-vod/streams/georestrictions/1tv_vitrinatv_16x9_v2/index.m3u8?token=v2.o0EGGlCJIHEIMl-5rbq02OcMnffPlZw7PcLyVOE0EAk.CI8FfHcKOW7pn27OakhWtlXZKkdwbSXOVWidveQ3x-E.1792168240.8bf2fa41b8491f6c7123a257dee8bf2e"}, {"slug": "russia1", "title": "Россия 1", "logo": "https://vitrina.tv/assets/images/logos/russia1/russia1.svg", "hls": "https://vitrina-live-cdnnow.mediavitrina.ru/hls-vod/streams/georestrictions/vgtrk_russia1_16x9_v1/index.m3u8?token=v2.scVGOuYfouVppTD4hh06qiAO1IQYwo9N37gmiDWPLZA.MLs2cbIlokDUpenp8a0YE2N-KzysER-T0_RfBK-ZpVE.1792168240.cf9f6c4535a401e9eaadb39c02f8b8d7"}, {"slug": "matchtv", "title": "Матч ТВ", "logo": "https://vitrina.tv/assets/images/logos/matchtv/matchtv.svg", "hls": "https://edge02d.mediavitrina.ru/hls-vod/streams/georestrictions/matchtv_vitrinatv_16x9_v2/index.m3u8?token=v2.cKrsdGSNohAGvCxyiXfC9C05rcZ3KKoruPU0jHQSI50.LiDcT5Jv2Hh3vikWrQODLUeuNhXjkvLjKfOh3rNoXgI.1792168240.8e5d8cba092ad495a61ef56f6f9c290b"}, {"slug": "ntv", "title": "НТВ", "logo": "https://vitrina.tv/assets/images/logos/ntv/ntv.svg", "hls": "https://edge02r.mediavitrina.ru/hls-vod/streams/georestrictions/ntv_vitrinatv_16x9_v2/index.m3u8?token=v2.8ngB7Xcx7es7uwEfKx884EHyUyGDS1ncI-BkzMTBnXo.OOj5XCUEdGz_I_dGD6gSk7AovzF1CKxowqISsyPUMI4.1792168241.459cc18bfe6bd38da70deabcd616b48b"}, {"slug": "5tv", "title": "Пятый канал", "logo": "https://vitrina.tv/assets/images/logos/5tv/5tv.svg", "hls": "https://edge01r.mediavitrina.ru/hls-vod/streams/georestrictions/nmg_tv-5_16x9_v1/index.m3u8?token=v2.1C3P81eibUsVNgLVMRGT9RDNseKFyXOCNvU9FL1Z1Pg.5HCQVJuXoMCXW5ZDhKWr0n-CCZBqzM0aUOW2eST9Vq8.1792168241.5cc2700fe00c5788f2f4c2a1f3453cfb"}, {"slug": "kultura", "title": "Россия К", "logo": "https://vitrina.tv/assets/images/logos/russia_kultura/kultura.svg", "hls": "https://vitrina-live-cdnnow.mediavitrina.ru/hls-vod/streams/georestrictions/vgtrk_russiak_16x9_v1/index.m3u8?token=v2.0gdMkMXDuyBZB4zThexEb35PN8NsJi2keoIJJ8pDGo8.56Bp0xEy1SMIKcdX7A4rO8NlObhmEKmPcWjheagrPLw.1792168241.c8d97a4a5e1bdb84deda8091e1c621a1"}, {"slug": "russia24", "title": "Россия 24", "logo": "https://vitrina.tv/assets/images/logos/russia24/russia24.svg", "hls": "https://vitrina-live-cdnnow.mediavitrina.ru/hls-vod/streams/georestrictions/vgtrk_russia24_16x9_v1/index.m3u8?token=v2.kEIDa3U2sgV0XxhCWwhNcl6ZIONSeH79MUKpoDvGSqA.SdjWr-vLBqN4hi6MQgAsQIkGIpuGHgelEZ-ukaZZ974.1792168242.5180489994c69c8145adef8a27e23f7b"}, {"slug": "carusel", "title": "Карусель", "logo": "https://vitrina.tv/assets/images/logos/carousel/carousel.svg", "hls": "https://edge08d.mediavitrina.ru/hls-vod/streams/georestrictions/karusel_vitrinatv_16x9_v2/index.m3u8?token=v2.-g76yWvd9cMXelPHCxuLUWdCF-_XY3qA9lkJbKk-yh8.s6B0hF8yb7Yc40QeNrXwUGZfgGsWxY_zVUkyuOdCRS0.1792168242.8abd3f8ad5c650f30b403d12ad69a48f"}, {"slug": "otr", "title": "ОТР", "logo": "https://vitrina.tv/assets/images/logos/otr/otr.svg", "hls": "https://edge01p.mediavitrina.ru/hls-vod/streams/georestrictions/otr_vitrinatv_16x9_v2/index.m3u8?token=v2.pJxtrORKuIWFDPdP_gsc0ynwEMMJIzfkQqJNLwOOzFA.srXsrggoPmMMOz4S-rEEqRf77tN943fALQxlyL1SCIY.1792168242.06be738b5f368aa83d76b57c75b435ce"}, {"slug": "tvc", "title": "ТВ Центр", "logo": "https://vitrina.tv/assets/images/logos/tvc/tvc.svg", "hls": "https://edge02d.mediavitrina.ru/hls-vod/streams/georestrictions/tvcenter_16x9_v1/index.m3u8?token=v2.u979p_OQw9FVgF0RgXIjSVsP89h-mC8A0QR_fGaPq1g.j09btFXW7WwvDtX1sZeR3j8IE3HHbDP3oK6wcVZ6GXY.1792168243.445d197014ea9f5c4d620daac68bd331"}, {"slug": "rentv", "title": "РЕН ТВ", "logo": "https://vitrina.tv/assets/images/logos/rentv/rentv.svg", "hls": "https://edge08d.mediavitrina.ru/hls-vod/streams/georestrictions/nmg_ren-tv_16x9_v3/index.m3u8?token=v2.yc9EzBhHsHN9rA-Lxowd5hEHAyM5HRVoaw-ULHAmjvI.pX6Zq-IqUvwCDFDYCHiI6fcQeEQM83DfxPzaNbce8AI.1792168243.a23d9f31af5918ea6e98bd2a0da85264"}, {"slug": "spas", "title": "СПАС", "logo": "https://vitrina.tv/assets/images/logos/spas/spas.svg", "hls": "https://edge06r.mediavitrina.ru/hls-vod/streams/georestrictions/spas_4x3_v1/index.m3u8?token=v2.gJqlPdZ_evzf9PrP3MfUVUMoJaiCKiPot2OY9LSOpQU.TNTs0o45HW2xMI9lzlGZeIL1OiSIEDOY2wgRAvm2RQ4.1792168243.37702f7394fd3c8fe4f49ec0ce25ccc5"}, {"slug": "ctc", "title": "СТС", "logo": "https://vitrina.tv/assets/images/logos/ctc/ctc.svg", "hls": "https://edge05p.mediavitrina.ru/hls-vod/streams/georestrictions/ctc_ctc_16x9_v2/index.m3u8?token=v2.Sg1c0vU_g4-stqLepddWNLgIItig3_bSnSB1tqe8hT4.H69fVybAc67ffTrB09kfyiKr2WsqwWs4VEBuENIuZoA.1792168244.b03476f15c27443a422e30dd3b03ad78"}, {"slug": "dom", "title": "Домашний", "logo": "https://vitrina.tv/assets/images/logos/domashniy/domashniy.svg", "hls": "https://edge06d.mediavitrina.ru/hls-vod/streams/georestrictions/ctc_dom_16x9_v1/index.m3u8?token=v2.FvCToSI0jyuCqiDVpBGWgeP94bGegE35VaIcpn2SMmI.OrDA-3Wkqx80CA0f7sR5AeJFaQbiwo5Ny2o2NERPb-I.1792168244.0bc6b214db0325afa67f78a899f2f9fc"}, {"slug": "tv3", "title": "ТВ-3", "logo": "https://vitrina.tv/assets/images/logos/tv3/tv3.svg", "hls": "https://edge06r.mediavitrina.ru/hls-vod/streams/georestrictions/tv3_vitrinatv_16x9_v2/index.m3u8?token=v2.6faD1yScO7pEzr-J-Q3W1jlCdmxULBKvumGGe9dPPJc.xzl_TqUCEMjOF_qGKJQvChMQSi-DQLdRz48Arv8zwVY.1792168244.6e141aafe60c884ec84dc263ce01d8d0"}, {"slug": "friday", "title": "Пятница", "logo": "https://vitrina.tv/assets/images/logos/pyatnica/pyatnica.svg", "hls": "https://edge08r.mediavitrina.ru/hls-vod/streams/georestrictions/friday_vitrinatv_16x9_v2/index.m3u8?token=v2.6JmaNeXGLNAD7dIF8LsY6aqacApCqVAvgxHfXggwr-U.99FE2Gz_IBZPI4tybLYufj2wnUfXBu6GBCmylb4l-_Q.1792168245.91206fd7a7af6ae09cc9318fe868b51c"}, {"slug": "tvzvezda", "title": "Звезда", "logo": "https://vitrina.tv/assets/images/logos/zvezda/zvezda.svg", "hls": "https://edge07d.mediavitrina.ru/hls-vod/streams/georestrictions/zvezda_16x9_v1/index.m3u8?token=v2.1YK86CltT6XciFleqlta1D9_eD49x0KR8CnOSS8fw8M.u7bBLhUe_CDtZOEv1Ozt1hnGnbUI1TvwY8YDPXqxFoI.1792168245.6f2e743777d169ddf9ade5c873f2bf01"}, {"slug": "mir", "title": "МИР", "logo": "https://vitrina.tv/assets/images/logos/mir/mir.svg", "hls": "https://edge04p.mediavitrina.ru/hls-vod/streams/georestrictions/mtrkmir_mir_16x9_v1/index.m3u8?token=v2.snxcAVC9Vigi1p1a7qMtq6ulQ9HQ1XwgVOuLQpGeneY.SfEOaTDVHIXu2ImZvRBkbSgeHmkBncviCdMnPu8l-nQ.1792168245.32dd45f43c3456d33f217028f185c12b"}, {"slug": "tnt", "title": "ТНТ", "logo": "https://vitrina.tv/assets/images/logos/tnt/tnt.svg", "hls": "https://edge02r.mediavitrina.ru/hls-vod/streams/georestrictions/tnt_vitrinatv_16x9_v2/index.m3u8?token=v2.b5RQKHpmPVh3x9Z5vaqcl7Pn5QC_jkIDLJ-hpfYupmE.lgS4m8j6cj2cXV9PkkhUyGjMVH1K3b_EJeRc2jma5BI.1792168246.0032d9dff099a4103bfefb6d635d15b6"}, {"slug": "muztv", "title": "Муз-ТВ", "logo": "https://vitrina.tv/assets/images/logos/muztv/muztv.svg", "hls": "https://edge07d.mediavitrina.ru/hls-vod/streams/georestrictions/muztv_16x9_v1/index.m3u8?token=v2.iHVfe_i0dC0O5O8YewFnocvb5mYOB0LMjbGPKhsMEAE.LHoPnVrOurHhHDIqq0g8HRnnWEVHvDo5qeYzek-98A0.1792168246.a593287991744187758a933ddb9eabc4"}, {"slug": "che", "title": "Че", "logo": "https://vitrina.tv/assets/images/logos/che/che.svg", "hls": "https://edge06r.mediavitrina.ru/hls-vod/streams/georestrictions/ctc_che_16x9_v2/index.m3u8?token=v2.QhV2xf2Xingmrhx-WwdZi1iVW3ME3Xak3ytFpUXkBVw.QNbqSnWUN7Q5QGWTYMpcA2htThL97EFtnKoFdoyp_KM.1792168246.0acd868cff212f646986eb2caaff59eb"}, {"slug": "iz", "title": "Известия", "logo": "https://vitrina.tv/assets/images/logos/iz/iz.svg", "hls": "https://edge07d.mediavitrina.ru/hls-livef7/izvestia/index.m3u8?token=v2.aC6VfRH6BXR-q4G7mKrnthuDgUJSD2-ydQJPrJv7rL4.-wb3BZtR3TYU60CAwPKoehhe8kzUCkdeA1cs28eL62U.1792168247.ac8ff25c331328238132d38bf53197ac"}, {"slug": "ctclove", "title": "СТС Love", "logo": "https://vitrina.tv/assets/images/logos/ctc_love/ctc_love.svg", "hls": "https://edge03p.mediavitrina.ru/hls-vod/streams/georestrictions/ctc_ctc-love_4x3_v2/index.m3u8?token=v2.Czbh7ynNvjjAbvNtNRlVA3EBshwOid4uJ47zPcF5Y6s.mfC6-eYLl9Yw3eQrWTIWeS9VXOJcaIzFuzp221S8ivg.1792168247.24876e54992f3f12922beae98c074571"}, {"slug": "u", "title": "Ю", "logo": "https://vitrina.tv/assets/images/logos/yu/yu.svg", "hls": "https://edge01d.mediavitrina.ru/hls-vod/streams/georestrictions/utv_16x9_v2/index.m3u8?token=v2.Jb3CL6FjEfX5I0ZZjpf6fJ_OaSVDQoie3gXxgbebnPc.1lthQc65W-pKXAqFVekVtdUVk9CQ3g9Qt2F2v7uJfEQ.1792168247.15064d5fc8155aade428b26f200c1053"}, {"slug": "solnce", "title": "Солнце", "logo": "https://vitrina.tv/assets/images/logos/solnce/solnce.svg", "hls": "https://vitrina-live-cdnnow.mediavitrina.ru/hls-vod/streams/georestrictions/solnce_vitrinatv_16x9_v2/index.m3u8?token=v2.Ev4zO3SLGOoIfkGd7mpBjEd_p9VTJbI-SgATaMcdNuA.nnaYrfd_Ac6kEX5OGzoe9LD2HakBUEmSbC6m93FrZmo.1792168248.4f0996ef1d4a2bf683bde38a54194f18"}, {"slug": "subbota", "title": "Суббота", "logo": "https://vitrina.tv/assets/images/logos/subbota/subbota.svg", "hls": "https://edge03p.mediavitrina.ru/hls-vod/streams/georestrictions/subbota_vitrinatv_16x9_v2/index.m3u8?token=v2.-Wyy7l6XjBd_UzaiRzwRW61jjEiRvfb7Vv-LC4P8GkA.nPE7h6b_KIlvqn2Aj9WPb_08-SeCS02l4V3Wv28VcSM.1792168248.7441c6d9460ec8ad8327b9bca5c37bc2"}, {"slug": "tk78", "title": "Телеканал 78", "logo": "https://vitrina.tv/assets/images/logos/78/78.svg", "hls": "https://edge07r.mediavitrina.ru/hls-vod/streams/georestrictions/nmg_78_16x9_v1/index.m3u8?token=v2._E69ruCQ1xLTooEFFok0fGw2Tpp8ZpNLmBOWI2HeSc0.WWHmbVrdYc7VG1iwHOgom0ndWsb7CEQ-LSt3ili1jFI.1792168248.f52de86fedd4f2e5b347d836fec68a04"}];
+
+const video = document.getElementById('video');
+const carousel = document.getElementById('carousel');
+const nowEl = document.getElementById('now');
+const statusEl = document.getElementById('status');
+const playerEl = document.getElementById('player');
+
+let hls = null;
+let currentSlug = null;
+
+function renderCarousel() {
+  carousel.innerHTML = '';
+  for (const ch of CHANNELS) {
+    const el = document.createElement('div');
+    el.className = 'channel';
+    el.dataset.slug = ch.slug;
+    el.title = ch.title;
+    el.innerHTML = `
+      ${ch.logo ? `<img src="${ch.logo}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : ''}
+      <div class="name">${escapeHtml(ch.title)}</div>
+    `;
+    el.addEventListener('click', () => play(ch.slug));
+    carousel.appendChild(el);
+  }
+}
+
+function play(slug) {
+  const ch = CHANNELS.find(c => c.slug === slug);
+  if (!ch) return;
+  currentSlug = slug;
+  nowEl.textContent = ch.title;
+  highlight(slug);
+  playerEl.classList.add('loading');
+
+  if (hls) { hls.destroy(); hls = null; }
+  video.removeAttribute('src');
+  video.load();
+
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = ch.hls;
+    video.play().catch(() => {});
+    video.addEventListener('loadedmetadata', () => playerEl.classList.remove('loading'), { once: true });
+  } else if (window.Hls && Hls.isSupported()) {
+    hls = new Hls({ lowLatencyMode: true, enableWorker: true });
+    hls.loadSource(ch.hls);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      playerEl.classList.remove('loading');
+      video.play().catch(() => {});
+    });
+    hls.on(Hls.Events.ERROR, (_, data) => {
+      if (data.fatal) {
+        console.warn('HLS error', data);
+        playerEl.classList.remove('loading');
+      }
+    });
+  } else {
+    statusEl.textContent = 'HLS не поддерживается этим браузером';
+  }
+}
+
+function highlight(slug) {
+  for (const el of carousel.children) {
+    el.classList.toggle('active', el.dataset.slug === slug);
+  }
+  const active = carousel.querySelector('.channel.active');
+  if (active) active.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+statusEl.textContent = `каналов: ${CHANNELS.length}`;
+renderCarousel();
+if (CHANNELS.length) play(CHANNELS[0].slug);
+</script>
+</body>
+</html>
